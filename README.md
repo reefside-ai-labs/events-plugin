@@ -27,7 +27,7 @@ dotnet test -c Release
 ./dev/package.sh
 ```
 
-Extract `artifacts/Jellyfin.Plugin.Events-0.1.0.0.zip` into a dedicated directory under the server's plugins directory, such as `/config/plugins/Events_0.1.0.0/`. Restart Jellyfin. Open **Dashboard → Plugins → Events → Settings** and create your events. Remove any older Events DLL installation before installing another version.
+Extract `artifacts/Jellyfin.Plugin.Events-0.1.1.0.zip` into a dedicated directory under the server's plugins directory, such as `/config/plugins/Events_0.1.1.0/`. Restart Jellyfin. Open **Dashboard → Plugins → Events → Settings** and create your events. Remove any older Events DLL installation before installing another version.
 
 Use the settings page to save changes before previewing. For annual dates, enter `MM-dd`, such as `10-18` through `10-31`. Pick artwork with **Use artwork** beside a selected item or search result. Artwork uses the source item's Primary image; choose an item with that image available.
 
