@@ -54,7 +54,7 @@ One-time setup:
 
 - Merge the Events entry in the catalog repository's `plugins.json` onto its
   default branch, along with this repository's publish workflow.
-- Give this repository access to the Actions variable `PLUGIN_REPO_APP_CLIENT_ID`
+- Give this repository access to the Actions secret `PLUGIN_REPO_APP_CLIENT_ID`
   and secret `PLUGIN_REPO_APP_PRIVATE_KEY`. The GitHub App must be installed on
   `reefside-ai-labs/jellyfin-plugin-repo` with **Contents: read and write** permission.
 - Allow the catalog's existing update workflow to push to its default branch.
