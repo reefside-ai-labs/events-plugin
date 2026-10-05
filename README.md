@@ -35,6 +35,39 @@ The displayed server timezone must match your intended location. For Docker, set
 
 Configuration is persisted in Jellyfin's plugin configuration directory as `Jellyfin.Plugin.Events.xml`; include it in normal server backups. Selections use server-local Jellyfin IDs and do not automatically rematch content after deletion/reimport or migration to another server.
 
+## Releases and plugin catalog
+
+Publish a GitHub release with a tag such as `v0.2.0` or `v0.2.0.0`. The
+[publish workflow](.github/workflows/publish.yml) tests the tagged source, builds
+a ZIP with the release's four-part assembly version, and uploads the ZIP and
+`manifest.json` to that release. Three-part tags receive a trailing `.0`;
+other tag formats are rejected. Update `build.yaml` metadata and changelog
+before tagging; the tag supplies the published version.
+
+After the assets upload successfully, stable releases notify
+[`reefside-ai-labs/jellyfin-plugin-repo`](https://github.com/reefside-ai-labs/jellyfin-plugin-repo)
+to refresh its catalog. Prereleases are packaged but excluded from the catalog;
+use a numeric tag and GitHub's prerelease checkbox. To retry an existing published
+release, run **Actions → Publish plugin → Run workflow** and enter its tag.
+
+One-time setup:
+
+- Merge the Events entry in the catalog repository's `plugins.json` onto its
+  default branch, along with this repository's publish workflow.
+- Give this repository access to the Actions variable `PLUGIN_REPO_APP_CLIENT_ID`
+  and secret `PLUGIN_REPO_APP_PRIVATE_KEY`. The GitHub App must be installed on
+  `reefside-ai-labs/jellyfin-plugin-repo` with **Contents: read and write** permission.
+- Allow the catalog's existing update workflow to push to its default branch.
+
+The catalog also polls weekly and supports manual updates. If notification fails,
+the release assets remain available; fix the App configuration and rerun the
+publish workflow, or run **Update plugin manifest** in the catalog repository.
+Add this catalog URL under **Dashboard → Plugins → Repositories** in Jellyfin:
+
+```text
+https://raw.githubusercontent.com/reefside-ai-labs/jellyfin-plugin-repo/main/manifest.json
+```
+
 ## Docker verification
 
 Requires Docker, .NET 10, Python 3, and FFmpeg on the host:

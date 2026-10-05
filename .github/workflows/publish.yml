@@ -1,0 +1,98 @@
+name: Publish plugin
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to package (for example v0.2.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Install repository manager
+        run: python -m pip install 'jprm==1.1.0'
+
+      - name: Validate release and test
+        id: release
+        run: |
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease > release.json
+          if [[ "$(jq -r .isDraft release.json)" == true ]]; then
+            echo 'Publish the release before packaging it.'
+            exit 1
+          fi
+          echo "prerelease=$(jq -r .isPrerelease release.json)" >> "$GITHUB_OUTPUT"
+          version="${RELEASE_TAG#v}"
+          if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            version="$version.0"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'Release tag must have three or four numeric version components (optional v prefix).'
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          dotnet test Jellyfin.Plugin.Events.slnx -c Release --nologo
+
+      - name: Build package and repository manifest
+        env:
+          PACKAGE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          mkdir -p artifacts
+          jprm plugin build . --dotnet-framework net10.0 --version "$PACKAGE_VERSION"
+          jprm repo init artifacts/manifest.json
+          for package in artifacts/*.zip; do
+            jprm repo add --plugin-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/$(basename "$package")" artifacts/manifest.json "$package"
+          done
+
+      - name: Upload release assets
+        run: gh release upload "$RELEASE_TAG" artifacts/*.zip artifacts/manifest.json --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Create catalog notification token
+        if: steps.release.outputs.prerelease == 'false'
+        id: catalog-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PLUGIN_REPO_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PLUGIN_REPO_APP_PRIVATE_KEY }}
+          owner: reefside-ai-labs
+          repositories: jellyfin-plugin-repo
+          permission-contents: write
+
+      - name: Notify central plugin catalog
+        if: steps.release.outputs.prerelease == 'false'
+        env:
+          GH_TOKEN: ${{ steps.catalog-token.outputs.token }}
+        run: |
+          gh api --method POST repos/reefside-ai-labs/jellyfin-plugin-repo/dispatches \
+            -f event_type=plugin-release
