@@ -1,0 +1,18 @@
+bin/
+obj/
+.vs/
+.idea/
+# Local verification server and build artifacts
+/dev/data/
+/artifacts/
+node_modules/
+dist/
+
+# Local environment and OS files
+.env
+.env.*
+!.env.example
+.DS_Store
+
+__pycache__/
+*.pyc

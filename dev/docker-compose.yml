@@ -1,0 +1,14 @@
+name: jellyfin-events-dev
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: events-jellyfin
+    environment:
+      TZ: America/Denver
+    ports:
+      - "127.0.0.1:8097:8096"
+    volumes:
+      - ./data/config:/config
+      - ./data/cache:/cache
+      - ./data/media:/media:ro
+    restart: "no"

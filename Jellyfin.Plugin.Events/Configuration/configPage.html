@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Events</title></head>
+<body>
+<div id="EventsConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
+    <style>
+        #EventsConfigPage .events-layout { display: flex; gap: 2em; flex-wrap: wrap; }
+        #EventsConfigPage .events-sidebar { flex: 1 1 15em; }
+        #EventsConfigPage .events-editor { flex: 3 1 28em; min-width: 0; }
+        #EventsConfigPage .events-row { display: flex; align-items: center; gap: .5em; margin: .6em 0; flex-wrap: wrap; }
+        #EventsConfigPage .events-row .events-label { flex: 1 1 12em; overflow-wrap: anywhere; }
+        #EventsConfigPage .events-list { padding: 0; list-style: none; }
+        #EventsConfigPage .events-warning { border-left: 3px solid #edaf43; padding: .6em 1em; margin: .5em 0; }
+        #EventsConfigPage .events-error { color: #ff8c8c; }
+        #EventsConfigPage #events-list .events-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: .25em; }
+        #EventsConfigPage #events-list button:first-child { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+        #EventsConfigPage .events-selected { border-left: 3px solid #00a4dc; padding-left: .5em; }
+        #EventsConfigPage button:disabled { opacity: .45; }
+        #EventsConfigPage .events-message { margin: 1em 0; white-space: pre-line; }
+        #EventsConfigPage [hidden] { display: none !important; }
+    </style>
+    <div data-role="content"><div class="content-primary">
+        <h1>Events</h1>
+        <p>Curate movies and episodes for seasonal discovery. Events promote content through the plugin API.</p>
+        <p id="events-zone"></p>
+        <div id="events-message" class="events-message" role="status" aria-live="polite"></div>
+        <div id="events-warnings" aria-live="polite"></div>
+        <form id="events-form">
+            <div class="events-row">
+                <button is="emby-button" class="raised button-submit" type="submit" id="events-save">Save changes</button>
+                <button is="emby-button" class="raised" type="button" id="events-reload">Reload saved events</button>
+                <span id="events-dirty"></span>
+            </div>
+            <div class="events-layout">
+                <section class="events-sidebar" aria-label="Events list">
+                    <h2>Your events</h2>
+                    <button is="emby-button" class="raised" type="button" id="events-add">Create event</button>
+                    <ul id="events-list" class="events-list"></ul>
+                </section>
+                <section class="events-editor" id="events-editor" aria-label="Edit event" hidden>
+                    <h2>Edit event</h2>
+                    <div class="inputContainer"><label for="events-title">Title</label><input is="emby-input" id="events-title" maxlength="200" required></div>
+                    <div class="inputContainer"><label for="events-description">Description (optional)</label><textarea id="events-description" class="emby-input" rows="3" maxlength="4000"></textarea></div>
+                    <div class="checkboxContainer"><label><input id="events-enabled" type="checkbox"> Enabled</label></div>
+                    <div class="selectContainer"><label for="events-type">Schedule</label><select is="emby-select" id="events-type"><option value="Annual">Every year</option><option value="OneTime">One-time dates</option></select></div>
+                    <div class="events-row">
+                        <div class="inputContainer"><label for="events-start">Start date</label><input is="emby-input" id="events-start" required></div>
+                        <div class="inputContainer"><label for="events-end">End date</label><input is="emby-input" id="events-end" required></div>
+                    </div>
+                    <p id="events-date-help" class="fieldDescription"></p>
+                    <h3>Artwork</h3>
+                    <p id="events-artwork">No artwork selected.</p>
+                    <button is="emby-button" class="raised" type="button" id="events-clear-artwork">Clear artwork</button>
+                    <h3>Selected content</h3>
+                    <p class="fieldDescription">Display order follows this list. Missing items remain here for repair. Watched items are included.</p>
+                    <ul id="events-items" class="events-list"></ul>
+                    <h3>Find movies and episodes</h3>
+                    <div class="events-row"><input is="emby-input" id="events-search" aria-label="Search movies and episodes" placeholder="Search title" maxlength="200"><button is="emby-button" class="raised" type="button" id="events-search-button">Search</button></div>
+                    <ul id="events-results" class="events-list"></ul>
+                    <button is="emby-button" class="raised" type="button" id="events-more" hidden>More results</button>
+                    <hr>
+                    <button is="emby-button" class="raised" type="button" id="events-delete">Delete event</button>
+                </section>
+            </div>
+        </form>
+        <hr>
+        <section aria-label="Preview saved events">
+            <h2>Preview saved events</h2>
+            <p>Save changes first. Preview uses the same date, ordering, and access filtering as the viewer API.</p>
+            <div class="events-row">
+                <label for="events-preview-date">Preview date</label><input is="emby-input" id="events-preview-date" type="date" required>
+                <label for="events-preview-user">View as</label><select is="emby-select" id="events-preview-user"><option value="">Administrator (you)</option></select>
+                <button is="emby-button" class="raised" type="button" id="events-preview">Preview</button>
+            </div>
+            <div id="events-preview-results" aria-live="polite"></div>
+        </section>
+    </div></div>
+    <script>
+    (function () {
+        'use strict';
+        var page = document.querySelector('#EventsConfigPage');
+        var state = { events: [], revision: 0, selected: null, diagnostics: [], dirty: false, loaded: false, results: [], searchOffset: 0, searchTerm: '', generation: 0 };
+        var timer;
+        function el(name) { return page.querySelector('#events-' + name); }
+        function selected() { return state.events.find(function (event) { return event.Id === state.selected; }); }
+        function message(text, error) { el('message').textContent = text; el('message').classList.toggle('events-error', !!error); }
+        function report(error) { message(error.message || 'Request failed. Check the server connection.', true); }
+        function api(path, method, data) {
+            return ApiClient.ajax({
+                type: method || 'GET', url: ApiClient.getUrl('Events/' + path), dataType: 'json',
+                contentType: 'application/json', data: data === undefined ? undefined : JSON.stringify(data)
+            }).catch(function (error) {
+                var body = error.responseJSON;
+                if (!body && error.responseText) { try { body = JSON.parse(error.responseText); } catch (_) {} }
+                throw new Error(body && body.Errors ? body.Errors.join('\n') : error.status === 409 ? 'Events changed in another session. Reload before saving.' : 'Request failed (' + (error.status || 'connection') + ').');
+            });
+        }
+        function button(text, action, disabled) {
+            var node = document.createElement('button'); node.type = 'button'; node.className = 'raised emby-button';
+            node.textContent = text; if (text === '↑' || text === '↓') { node.setAttribute('aria-label', text === '↑' ? 'Move up' : 'Move down'); } node.disabled = !!disabled; node.addEventListener('click', action); return node;
+        }
+        function row(label) {
+            var node = document.createElement('li'); node.className = 'events-row';
+            var name = document.createElement('span'); name.className = 'events-label'; name.textContent = label; node.appendChild(name); return node;
+        }
+        function label(item) {
+            return item.Type === 'Episode' ? (item.SeriesName || 'Series') + ' · S' + String(item.ParentIndexNumber || 0).padStart(2, '0') + 'E' + String(item.IndexNumber || 0).padStart(2, '0') + ' · ' + item.Name : item.Name + (item.ProductionYear ? ' (' + item.ProductionYear + ')' : '');
+        }
+        function changed() {
+            state.dirty = true; state.generation++; el('dirty').textContent = 'Unsaved changes';
+            el('preview-results').replaceChildren(); clearTimeout(timer); timer = setTimeout(validate, 350);
+        }
+        function renderWarnings(data) {
+            var wasOpen = el('warnings').querySelector('details');
+            var keepOpen = wasOpen && wasOpen.open;
+            el('warnings').replaceChildren();
+            if (!data.Warnings.length) { return; }
+            var details = document.createElement('details'); details.open = keepOpen || data.Warnings.length === 1;
+            var summary = document.createElement('summary'); summary.className = 'events-warning';
+            summary.textContent = data.Warnings.length + ' overlapping schedule pair' + (data.Warnings.length === 1 ? '' : 's') + ' — review dates. Saving is allowed.';
+            details.appendChild(summary); el('warnings').appendChild(details);
+            data.Warnings.forEach(function (warning) {
+                var node = document.createElement('div'); node.className = 'events-warning';
+                node.textContent = 'Schedule overlap: “' + warning.FirstTitle + '” and “' + warning.SecondTitle + '” (' + warning.Start + '–' + warning.End + (warning.RepeatsAnnually ? ', repeats annually' : '') + '). Both are allowed; consider adjusting their dates.';
+                details.appendChild(node);
+            });
+        }
+        function validate() {
+            var generation = state.generation;
+            api('Validate', 'POST', { Revision: state.revision, Events: state.events }).then(function (data) {
+                if (generation !== state.generation) { return; }
+                renderWarnings(data); state.diagnostics = data.Diagnostics; renderItems();
+            }).catch(function (error) { if (generation === state.generation) { el('warnings').textContent = error.message; } });
+        }
+        function move(list, index, direction) { var target = index + direction; if (target < 0 || target >= list.length) { return; } var item = list.splice(index, 1)[0]; list.splice(target, 0, item); changed(); }
+        function renderList() {
+            el('list').replaceChildren();
+            if (!state.events.length) { el('list').appendChild(row('No events yet. Create your first seasonal event.')); }
+            state.events.forEach(function (event, index) {
+                var node = row(''); node.firstChild.remove();
+                node.appendChild(button(event.Title + (event.Enabled ? '' : ' (disabled)'), function () { state.selected = event.Id; state.results = []; renderList(); renderEditor(); }));
+                if (event.Id === state.selected) { node.classList.add('events-selected'); }
+                node.appendChild(button('↑', function () { move(state.events, index, -1); renderList(); }, index === 0));
+                node.appendChild(button('↓', function () { move(state.events, index, 1); renderList(); }, index === state.events.length - 1));
+                el('list').appendChild(node);
+            });
+        }
+        function renderArtwork() {
+            var event = selected(); if (!event) { return; }
+            var item = event.Items.find(function (item) { return item.ItemId === event.ArtworkItemId; });
+            var diagnostic = state.diagnostics.find(function (entry) { return entry.EventId === event.Id; });
+            el('artwork').textContent = event.ArtworkItemId ? 'Artwork from: ' + (item ? item.Label : event.ArtworkItemId) + (diagnostic && diagnostic.ArtworkStatus === 'Missing' ? ' — missing; select a replacement.' : '') : 'No artwork selected.';
+        }
+        function renderItems() {
+            var event = selected(); el('items').replaceChildren(); if (!event) { return; }
+            var diagnostic = state.diagnostics.find(function (entry) { return entry.EventId === event.Id; });
+            if (!event.Items.length) { el('items').appendChild(row('No content selected. Empty events are omitted from discovery.')); }
+            event.Items.forEach(function (item, index) {
+                var status = diagnostic && diagnostic.Items.find(function (entry) { return entry.ItemId === item.ItemId; });
+                var node = row((item.Label || item.ItemId) + (status && status.Status !== 'Available' ? ' — ' + status.Status : ''));
+                if (status && status.Status !== 'Available') { node.classList.add('events-warning'); }
+                node.appendChild(button('↑', function () { move(event.Items, index, -1); renderItems(); }, index === 0));
+                node.appendChild(button('↓', function () { move(event.Items, index, 1); renderItems(); }, index === event.Items.length - 1));
+                node.appendChild(button('Use artwork', function () { event.ArtworkItemId = item.ItemId; changed(); renderArtwork(); }, status && status.Status !== 'Available'));
+                node.appendChild(button('Remove', function () { event.Items.splice(index, 1); changed(); renderItems(); renderResults(); }));
+                el('items').appendChild(node);
+            });
+            renderArtwork();
+        }
+        function dateInputs(event) {
+            var annual = event.ScheduleType === 'Annual';
+            el('start').type = annual ? 'text' : 'date'; el('end').type = annual ? 'text' : 'date';
+            el('start').placeholder = annual ? 'MM-dd' : ''; el('end').placeholder = annual ? 'MM-dd' : '';
+            el('start').value = event.StartDate; el('end').value = event.EndDate;
+            el('date-help').textContent = annual ? 'Use MM-dd, e.g. 12-01 through 12-31. Both dates included. Cross-year ranges allowed; February 29 is not an annual boundary.' : 'Both dates included. The end date must be on or after the start date.';
+        }
+        function renderEditor() {
+            var event = selected(); el('editor').hidden = !event; el('title').required = !!event; el('start').required = !!event; el('end').required = !!event;
+            if (!event) { return; }
+            el('title').value = event.Title; el('description').value = event.Description; el('enabled').checked = event.Enabled; el('type').value = event.ScheduleType;
+            dateInputs(event); renderItems(); renderResults();
+        }
+        function renderResults() {
+            el('results').replaceChildren(); var event = selected(); if (!event) { return; }
+            state.results.forEach(function (item) {
+                var node = row(label(item)); var included = event.Items.some(function (entry) { return entry.ItemId === item.Id; });
+                node.appendChild(button(included ? 'Added' : 'Add', function () { event.Items.push({ ItemId: item.Id, Label: label(item) }); changed(); renderItems(); renderResults(); }, included));
+                node.appendChild(button('Use artwork', function () { event.ArtworkItemId = item.Id; changed(); renderArtwork(); }));
+                el('results').appendChild(node);
+            });
+            el('more').hidden = state.results.length === 0 || state.results.length % 50 !== 0;
+        }
+        function search(more) {
+            if (!more) { state.searchTerm = el('search').value.trim(); state.searchOffset = 0; state.results = []; }
+            var term = state.searchTerm, offset = state.searchOffset, eventId = state.selected;
+            el('search-button').disabled = true; el('more').disabled = true;
+            api('Search?term=' + encodeURIComponent(term) + '&startIndex=' + offset).then(function (items) {
+                if (eventId !== state.selected || term !== state.searchTerm) { return; }
+                state.results = state.results.concat(items); state.searchOffset += items.length; renderResults();
+                if (!items.length) { el('results').appendChild(row('No more matching content.')); el('more').hidden = true; }
+            }).catch(report).finally(function () { el('search-button').disabled = false; el('more').disabled = false; });
+        }
+        function accept(data) {
+            state.events = data.Events; state.revision = data.Revision; state.diagnostics = data.Diagnostics; state.dirty = false; state.generation++;
+            if (!selected()) { state.selected = state.events.length ? state.events[0].Id : null; }
+            el('zone').textContent = 'Server timezone: ' + data.ServerTimeZone + ' · Today: ' + data.Date + '. Configure the server/container timezone to match your location.';
+            el('dirty').textContent = ''; el('preview-date').value = data.Date; renderWarnings(data); renderList(); renderEditor();
+        }
+        function load() { return api('Configuration').then(function (data) { accept(data); state.loaded = true; message(''); }); }
+        page.addEventListener('pageshow', function () {
+            if (state.loaded) { return; }
+            load().catch(report);
+            ApiClient.getUsers().then(function (users) { users.forEach(function (user) { var option = document.createElement('option'); option.value = user.Id; option.textContent = user.Name; el('preview-user').appendChild(option); }); }).catch(report);
+        });
+        el('add').addEventListener('click', function () {
+            var event = { Id: crypto.randomUUID().replace(/-/g, ''), Title: 'New event', Description: '', Enabled: true, ScheduleType: 'Annual', StartDate: '12-01', EndDate: '12-31', ArtworkItemId: null, Items: [] };
+            state.events.push(event); state.selected = event.Id; state.results = []; changed(); renderList(); renderEditor(); el('title').focus();
+        });
+        [['title', 'Title'], ['description', 'Description'], ['start', 'StartDate'], ['end', 'EndDate']].forEach(function (pair) {
+            el(pair[0]).addEventListener('input', function () { var event = selected(); if (event) { event[pair[1]] = this.value; changed(); if (pair[0] === 'title') { renderList(); } } });
+        });
+        el('enabled').addEventListener('change', function () { selected().Enabled = this.checked; changed(); renderList(); });
+        el('type').addEventListener('change', function () {
+            var event = selected(); event.ScheduleType = this.value;
+            if (this.value === 'Annual') { event.StartDate = event.StartDate.slice(-5); event.EndDate = event.EndDate.slice(-5); }
+            else { var year = el('preview-date').value.slice(0, 4) || String(new Date().getFullYear()); event.StartDate = year + '-' + event.StartDate; event.EndDate = year + '-' + event.EndDate; if (event.EndDate < event.StartDate) { event.EndDate = String(Number(year) + 1) + event.EndDate.slice(4); } }
+            changed(); dateInputs(event);
+        });
+        el('clear-artwork').addEventListener('click', function () { selected().ArtworkItemId = null; changed(); renderArtwork(); });
+        el('search-button').addEventListener('click', function () { search(false); });
+        el('search').addEventListener('keydown', function (event) { if (event.key === 'Enter') { event.preventDefault(); search(false); } });
+        el('more').addEventListener('click', function () { search(true); });
+        el('delete').addEventListener('click', function () {
+            if (!window.confirm('Delete “' + selected().Title + '”? This takes effect when you save.')) { return; }
+            state.events = state.events.filter(function (event) { return event.Id !== state.selected; }); state.selected = state.events.length ? state.events[0].Id : null;
+            state.results = []; changed(); renderList(); renderEditor();
+        });
+        el('reload').addEventListener('click', function () { if (!state.dirty || window.confirm('Discard unsaved changes?')) { load().catch(report); } });
+        el('form').addEventListener('submit', function (event) {
+            event.preventDefault(); clearTimeout(timer); el('form').inert = true; el('save').disabled = true;
+            api('Configuration', 'PUT', { Revision: state.revision, Events: state.events }).then(function (data) { accept(data); message('Events saved.'); }).catch(report).finally(function () { el('form').inert = false; el('save').disabled = false; });
+        });
+        el('preview').addEventListener('click', function () {
+            if (state.dirty) { message('Save changes before previewing.', true); return; }
+            if (!el('preview-date').value) { message('Select a preview date.', true); return; }
+            var query = 'date=' + encodeURIComponent(el('preview-date').value) + (el('preview-user').value ? '&userId=' + encodeURIComponent(el('preview-user').value) : '');
+            el('preview-results').replaceChildren(); el('preview').disabled = true;
+            api('Preview?' + query).then(function (feed) {
+                if (!feed.Events.length) { el('preview-results').appendChild(row('No active events with accessible content on this date.')); }
+                return Promise.all(feed.Events.map(function (event) { return api('Preview/' + event.Id + '/Items?' + query + '&limit=200'); }));
+            }).then(function (groups) {
+                groups.forEach(function (group) {
+                    var heading = document.createElement('h3'); heading.textContent = group.Event.Title + ' (' + group.TotalRecordCount + ' items)'; el('preview-results').appendChild(heading);
+                    var list = document.createElement('ul'); list.className = 'events-list'; group.Items.forEach(function (item) { list.appendChild(row(label(item))); }); el('preview-results').appendChild(list);
+                    if (group.TotalRecordCount > group.Items.length) { el('preview-results').appendChild(row('Showing the first 200 items. The client API supports pagination.')); }
+                });
+            }).catch(report).finally(function () { el('preview').disabled = false; });
+        });
+    }());
+    </script>
+</div>
+</body>
+</html>
