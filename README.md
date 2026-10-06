@@ -1,3 +1,7 @@
+<p align="center">
+    <img src="./images/events.png" alt="Events" height="400" />
+</p>
+
 # Jellyfin Events
 
 A Jellyfin server plugin for curated seasonal discovery. Create an event, select movies and individual TV episodes, and choose when a client should promote them. Christmas can run December 1–31; Halloween can include Harry Potter because it fits the event you curate.
