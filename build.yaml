@@ -1,7 +1,8 @@
 ---
 name: "Events"
 guid: "74fd27c8-721c-462b-a5f8-356cc7e01d62"
-version: "0.1.1.0"
+imageUrl: "https://raw.githubusercontent.com/reefside-ai-labs/events-plugin/main/images/events.png"
+version: "0.1.2.0"
 targetAbi: "12.1.0.0"
 framework: "net10.0"
 overview: "Curated seasonal discovery events"
@@ -13,4 +14,4 @@ owner: "reefside-ai-labs"
 artifacts:
   - "Jellyfin.Plugin.Events.dll"
 changelog: >
-  Refresh release metadata and packaging for the Reefside AI Labs plugin catalog.
+  Add the new plugin image to the Jellyfin plugin catalog.
